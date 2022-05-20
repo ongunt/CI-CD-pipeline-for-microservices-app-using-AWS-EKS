@@ -66,7 +66,7 @@ jobs:
   
   publish_docker_image:
     docker:
-      - image: onguntuna/ubuntu-20.04-docker
+      - image: onguntuna/finalproject
     steps:
       - checkout
       - setup_remote_docker:
@@ -90,7 +90,7 @@ jobs:
 
   create_eks_cluster:
     docker:
-      - image: onguntuna/ubuntu-20.04-docker
+      - image: onguntuna/ufinalproject
     steps:
       - checkout
       - install-kubectl-eks
@@ -110,7 +110,7 @@ jobs:
 
   deploy_kubernetes_app:
     docker:
-      - image: onguntuna/ubuntu-20.04-docker
+      - image: onguntuna/finalproject
     steps:
       - checkout
       - install-kubectl-eks
