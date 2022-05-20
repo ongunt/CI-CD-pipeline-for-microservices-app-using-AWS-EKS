@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: finalproject
+  labels:
+    app: finalproject
+    
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: finalproject
+  template:
+    metadata:
+      labels:
+        app: finalproject
+        
+    spec:
+      containers:
+      - name: finalproject
+        image: onguntuna/finalproject
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+  
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: finalproject-loadbalancer
+  labels:
+    app: finalproject
+    
+spec:
+  selector:
+    app: finalproject
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: LoadBalancer
