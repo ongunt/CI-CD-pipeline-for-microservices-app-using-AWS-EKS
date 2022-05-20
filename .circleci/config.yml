@@ -93,7 +93,7 @@ jobs:
       - image: onguntuna/ubuntu-20.04-docker
     steps:
       - checkout
-      - install-eksctl
+      - install-kubectl-eks
       - install-aws
       - run:
           name: create cluster
@@ -113,7 +113,7 @@ jobs:
       - image: onguntuna/ubuntu-20.04-docker
     steps:
       - checkout
-      - install-kubectl
+      - install-kubectl-eks
       - install-aws
       - run:
           name: connect to eks cluster
