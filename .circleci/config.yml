@@ -3,49 +3,167 @@ version: 2.1
 orbs:
   aws-eks: circleci/aws-eks@1.0.0
   kubernetes: circleci/kubernetes@0.11.1
+  aws-cli: circleci/aws-cli@3.1.1
 
 commands:
-    destroy-env:
-      description: Destroy cluster on fail
+    install-kubectl:
+      description: |
+        Installs kubectl (latest release, by default)
+        Requirements: curl, amd64 architecture
+      parameters:
+        kubectl-version:
+          default: latest
+          type: string
+        max-time:
+          default: false
+          description: |
+            This parameter will enable the curl command to not timeout for 600 seconds
+          type: boolean
       steps:
         - run:
-            name: Destroy all infrastructure
+            command: |
+              #!/bin/bash
+              KUBECTL_VERSION=$(eval echo "$PARAM_KUBECTL_VERSION")
+              MAX_TIME=$(eval echo "$PARAM_MAX_TIME")
+              if [ "$KUBECTL_VERSION" == "latest" ]; then
+                  # get latest kubectl release
+                  KUBECTL_VERSION=$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
+              fi
+
+              PLATFORM="linux"
+              if [ -n "$(uname | grep "Darwin")" ]; then
+                  PLATFORM="darwin"
+              fi
+
+              # download kubectl
+              if [ "$MAX_TIME" == "1" ]; then
+                  curl --max-time 300 -LO https://storage.googleapis.com/kubernetes-release/release/$KUBECTL_VERSION/bin/$PLATFORM/amd64/kubectl
+              else 
+                  curl -LO https://storage.googleapis.com/kubernetes-release/release/$KUBECTL_VERSION/bin/$PLATFORM/amd64/kubectl
+              fi
+
+              [ -w /usr/local/bin ] && SUDO="" || SUDO=sudo
+
+              $SUDO chmod +x ./kubectl
+
+              $SUDO mv ./kubectl /usr/local/bin
+            environment:
+              PARAM_KUBECTL_VERSION: <<parameters.kubectl-version>>
+              PARAM_MAX_TIME: <<parameters.max-time>>
+            name: Install kubectl
+
+
+
+    install-kops:
+      description: |
+        Installs kops (latest release, by default)
+        Requirements: curl, amd64 architecture
+      parameters:
+        kops-version:
+          default: latest
+          type: string
+      steps:
+        - run:
+            command: >
+              #!/bin/bash
+
+              KOPS_VERSION=$(eval echo "$PARAM_KOPS_VERSION")
+
+              if [[ "$KOPS_VERSION" == "latest" ]]; then
+                  # get latest kops release
+                  KOPS_VERSION=$(curl -s https://api.github.com/repos/kubernetes/kops/releases/latest | grep tag_name | cut -d '"' -f 4)
+              fi
+
+
+              PLATFORM="linux"
+
+              if [ -n "$(uname | grep "Darwin")" ]; then
+                  PLATFORM="darwin"
+              fi
+
+
+              # download kops
+
+              curl -Lo kops
+              https://github.com/kubernetes/kops/releases/download/$KOPS_VERSION/kops-$PLATFORM-amd64
+
+
+              [ -w /usr/local/bin ] && SUDO="" || SUDO=sudo
+
+
+              $SUDO chmod +x kops
+
+              $SUDO mv kops /usr/local/bin/kops
+            environment:
+              PARAM_KOPS_VERSION: <<parameters.kops-version>>
+            name: Install kops
+
+    create-env:
+      description: Create cluster
+      steps:
+        - run:
+            name: creating cluster
+            command: |
+              eksctl create cluster --name=app --region=us-west-2 --instance-types=t2.micro
+    
+    update-env: 
+      description: update cluster
+      steps:
+        - run: 
+            name: updating cluster
+            command: |
+              aws eks update-kubeconfig --name app   
+
+    destroy-env:
+      description: Destroying cluster on fail
+      steps:
+        - run:
+            name: Destroying cluster
             when: on_fail
             command: |
-              aws eks update-kubeconfig --name="Cluster-${CIRCLE_WORKFLOW_ID:0:7}"
+              aws eks update-kubeconfig --name="app"
               export KUBECONFIG=/root/.kube/config
               kubectl get svc
               kubectl delete -f deployment/
-              eksctl delete cluster Cluster-${CIRCLE_WORKFLOW_ID:0:7}
+              eksctl delete cluster app
+
+    rollback:
+      steps:
+        - run:
+            name: Check versions
+            when: on_fail
+            command: |
+              image=$(kubectl get deployment browser-app --namespace=app -o custom-columns=IMAGE:.spec.template.spec.containers[0].image | tail -1)
+              deployed_version="${image:31}"
+              echo "$deployed_version" > rollback_version.txt
+              echo "currently deployed $deployed_version"
+        - run:
+            name: rollback
+            when: on_fail
+            command: |
+              old=$(cat old_version.txt)
+              new=$(cat rollback_version.txt)
+              chmod +x revert_update.sh
+              ./revert_update.sh
+
 
 
 jobs:
-    linting-app-code:
+    linting:
       docker:
       - image: python:3.7.3-stretch
       working_directory: ~/repo
       steps:
       - checkout
       - run:
-          name: Install dependencies
+          name: Install dependencies and lint
           command: |
             python3 -m venv venv
             . venv/bin/activate
             make install
-      - run:
-          name: Lint the Dockerfile
-          command: |          
-            . venv/bin/activate
             make lint
-            RESULT=$?
-            if [ ${RESULT} -eq 0 ]
-            then
-              echo "linting success"
-            else
-              echo "linting failed"
-            fi
 
-    push-docker-image-to-image-repo:
+    docker:
       docker:
       - image: circleci/golang:1.15
       working_directory: ~/repo
@@ -54,21 +172,15 @@ jobs:
           version: 19.03.13
       - checkout
       - run:
-          name: Run Docker Build on the app
+          name: run Docker and push
           command: |
-            docker build --tag project5 .
-            docker image ls
-      - run:
-          name: Upload the container to remote repo
-          command: |
-            #login to docker        
+            docker build --tag capstone .
+            docker image ls     
             docker login --username onguntuna --password $DOCKER_PASSWORD
-            #tag local image with unique circleci ID in prep for pushing to remote repo
-            docker tag project5 onguntuna/project5:latest
-            #push the image to docker repo
-            docker push onguntuna/project5:latest
+            docker tag capstone onguntuna/capstone:latest
+            docker push onguntuna/capstone:latest
     
-    create-eks-cluster:
+    kubernetes-cluster-creation:
       executor: aws-eks/python3
       steps:
         - checkout
@@ -77,10 +189,6 @@ jobs:
         - run:
             name:
             command: |
-              if which eksctl > /dev/null; then
-              echo "eksctl is already installed"
-              exit 0
-              fi
               mkdir -p eksctl_download
               curl --silent --location --retry 5 "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C eksctl_download
               chmod +x eksctl_download/eksctl
@@ -90,60 +198,62 @@ jobs:
               fi
               $SUDO mv eksctl_download/eksctl /usr/local/bin/
               rmdir eksctl_download
-        - aws-eks/create-cluster:
-            cluster-name: Cluster-${CIRCLE_WORKFLOW_ID:0:7}
-            skip-kubectl-install: false
-            verbose: 3
-            node-type: t2.micro
-            nodes-max: 2
-            ssh-access: false
-            ssh-public-key: ''
+
+        - create-env
         - destroy-env
       
     
-    deploy-new-eks-cluster:
+    kubernetes-cluster-deployment:
       executor: aws-eks/python3
       steps:
-      - checkout
-      - kubernetes/install
-      - aws-eks/update-kubeconfig-with-authenticator:
-          cluster-name: Cluster-${CIRCLE_WORKFLOW_ID:0:7}
-          install-kubectl: true
-      - kubernetes/create-or-update-resource:
-          get-rollout-status: false
-          resource-file-path: deployment.yml
-          resource-name: deployment/project5
-      - destroy-env
+        - checkout
 
-    test-new-cluster:
+        - install-kops
+        - install-kubectl
+        - run:
+            name: Install aws
+            command: |
+              pip install awscli
+        
+        - update-env
+        - kubernetes/create-or-update-resource:
+            get-rollout-status: false
+            resource-file-path: deployment.yml
+            resource-name: deployment/capstone
+        - destroy-env
+
+    kubernetes-cluster-test:
       executor: aws-eks/python3
       steps:
-        - kubernetes/install
-        - aws-eks/update-kubeconfig-with-authenticator:
-            cluster-name: Cluster-${CIRCLE_WORKFLOW_ID:0:7}
+        - install-kops
+        - install-kubectl
+        
         - run:
-            name: check new cluster details
+            name: Install aws
+            command: |
+              pip install awscli
+        
+        - update-env
+        - run:
+            name: get the url
             command: |
               kubectl get services
-              kubectl get pods
-              kubectl get deployment
-              kubectl get nodes
         - destroy-env
 
 
 workflows:
   default:
     jobs:
-      - linting-app-code
-      - push-docker-image-to-image-repo:
+      - linting
+      - docker:
           requires:
-            - linting-app-code
-      - create-eks-cluster:
+            - linting
+      - kubernetes-cluster-creation:
           requires:
-            - push-docker-image-to-image-repo
-      - deploy-new-eks-cluster:
+            - docker
+      - kubernetes-cluster-deployment:
           requires:
-            - create-eks-cluster
-      - test-new-cluster:
+            - kubernetes-cluster-creation
+      - kubernetes-cluster-test:
           requires:
-            - deploy-new-eks-cluster
+            - kubernetes-cluster-deployment

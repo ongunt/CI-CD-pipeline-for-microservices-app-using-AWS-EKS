@@ -1,14 +1,14 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: project5
+  name: capstone
   labels:
-    app: project5
+    app: capstone
   namespace: default
 spec:
   selector:
     matchLabels:
-      app: project5
+      app: capstone
   replicas: 2
   strategy:
     rollingUpdate:
@@ -18,11 +18,11 @@ spec:
   template:
     metadata:
       labels:
-        app: project5
+        app: capstone
     spec:
       containers:
-      - name: project5
-        image: onguntuna/project5:latest
+      - name: capstone
+        image: onguntuna/capstone:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 80
@@ -31,12 +31,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: project5
+  name: capstone
   labels:
-    name: project5
+    name: capstone
 spec:
   selector:
-    app: project5
+    app: capstone
   type: LoadBalancer
   ports:
     - name: http
