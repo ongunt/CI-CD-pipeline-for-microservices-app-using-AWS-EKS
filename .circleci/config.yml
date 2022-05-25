@@ -62,11 +62,11 @@ jobs:
           name: Upload the container to remote repo
           command: |
             #login to docker        
-            docker login --username $DOCKER_USERNAME --password $DOCKER_ACCESS_TOKEN
+            docker login --username onguntuna --password $DOCKER_PASSWORD
             #tag local image with unique circleci ID in prep for pushing to remote repo
-            docker tag project5 $DOCKER_USERNAME/project5:latest
+            docker tag project5 onguntuna/project5:latest
             #push the image to docker repo
-            docker push $DOCKER_USERNAME/project5:latest
+            docker push onguntuna/project5:latest
     
     create-eks-cluster:
       executor: aws-eks/python3
