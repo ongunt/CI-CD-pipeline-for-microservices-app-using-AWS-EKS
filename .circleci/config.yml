@@ -162,7 +162,6 @@ jobs:
             . venv/bin/activate
             make install
             make lint
- 
 
     docker:
       docker:

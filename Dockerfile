@@ -1,18 +1,17 @@
 FROM python:3.7.3-stretch
 
-#STEP1
+# step 1
 WORKDIR /app
 
-#STEP2
+# step 2
 COPY . app.py /app/
 
-#STEP3
-
+# step 3
 RUN pip install --upgrade pip &&\
     pip install --trusted-host pypi.python.org -r requirements.txt
     
-# STEP4
+# step 4
 EXPOSE 80
 
-# STEP5
+# step 5
 CMD ["python", "app.py"]
