@@ -1,160 +1,149 @@
 version: 2.1
 
 orbs:
-  docker: circleci/docker@2.0.1
+  aws-eks: circleci/aws-eks@1.0.0
+  kubernetes: circleci/kubernetes@0.11.1
 
 commands:
-  install-dependencies:
-    description: install dependencies
-    steps:
-      - run:
-          name: install dependencies
-          command: |
-            pip install --upgrade pip && pip install -r requirements.txt
-  install-aws:
-    description: install aws
-    steps:
-      - run:
-          name: install aws
-          command: |
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-            unzip awscliv2.zip
-            ./aws/install
-            aws --version
-  install-kubectl-eks:
-    description: install kubectl
-    steps:
-      - run:
-          name: install kubectl
-          command: |
-            apt-get update
-            apt-get install -y apt-transport-https ca-certificates curl
-            curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
-            echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | tee /etc/apt/sources.list.d/kubernetes.list
-            apt-get update
-            apt-get install -y kubectl
-            curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
-            mv /tmp/eksctl /usr/local/bin
-            eksctl version
+    destroy-env:
+      description: Destroy cluster on fail
+      steps:
+        - run:
+            name: Destroy all infrastructure
+            when: on_fail
+            command: |
+              aws eks update-kubeconfig --name="Cluster-${CIRCLE_WORKFLOW_ID:0:7}"
+              export KUBECONFIG=/root/.kube/config
+              kubectl get svc
+              kubectl delete -f deployment/
+              eksctl delete cluster Cluster-${CIRCLE_WORKFLOW_ID:0:7}
 
-  destroy_cluster:
-    description: destroy eks cluster
-    steps:
-      - run:
-          name: destroy cluster
-          when: on_fail
-          command: |
-            eksctl delete cluster --name $CLUSTER_NAME
 
 jobs:
-  lint_dockerfile:
-    docker:
+    linting-app-code:
+      docker:
       - image: python:3.7.3-stretch
-    steps:
+      working_directory: ~/repo
+      steps:
       - checkout
-      - install-dependencies
       - run:
-          name: install lint
+          name: Install dependencies
           command: |
-            wget -O /bin/hadolint https://github.com/hadolint/hadolint/releases/download/v1.16.3/hadolint-Linux-x86_64
-            chmod +x /bin/hadolint
-            hadolint --version
+            python3 -m venv venv
+            . venv/bin/activate
+            make install
       - run:
-          name: run lint
-          command: |
+          name: Lint the Dockerfile
+          command: |          
+            . venv/bin/activate
             make lint
-  
-  publish_docker_image:
-    docker:
-      - image: onguntuna/finalproject
-    steps:
-      - checkout
-      - setup_remote_docker:
-          version: 20.10.7
-      - run: 
-          name: build image
-          command: |
-            docker build -t $dockerpath:$VERSION .
-      - run: 
-          name: tag image
-          command: |
-            docker tag $dockerpath:$VERSION $dockerpath:$VERSION
-      - run:
-          name: login to dockerhub
-          command: |
-            docker login -u $dockerId -p $dockerAuth
-      - run:
-          name: push image
-          command: |
-            docker push $dockerpath:$VERSION
-
-  create_eks_cluster:
-    docker:
-      - image: onguntuna/ufinalproject
-    steps:
-      - checkout
-      - install-kubectl-eks
-      - install-aws
-      - run:
-          name: create cluster
-          command: |
-            aws eks describe-cluster --name $CLUSTER_NAME > /dev/null
-            if [ $? -eq 0 ]
+            RESULT=$?
+            if [ ${RESULT} -eq 0 ]
             then
-              echo "Cluster already exists"
+              echo "linting success"
             else
-              echo "Create Cluster"
-              eksctl create cluster --config-file=cluster.yml
-            fi 
-      - destroy_cluster
+              echo "linting failed"
+            fi
 
-  deploy_kubernetes_app:
-    docker:
-      - image: onguntuna/finalproject
-    steps:
+    push-docker-image-to-image-repo:
+      docker:
+      - image: circleci/golang:1.15
+      working_directory: ~/repo
+      steps:
+      - setup_remote_docker:
+          version: 19.03.13
       - checkout
-      - install-kubectl-eks
-      - install-aws
       - run:
-          name: connect to eks cluster
-          command: | 
-            aws eks --region eu-central-1 update-kubeconfig --name hello-app
-            kubectl get svc
-      - run: 
-          name: deploy app
+          name: Run Docker Build on the app
           command: |
-            kubectl apply -f deployment.yml 
+            docker build --tag project5 .
+            docker image ls
       - run:
-          name: watch rollout
-          command: | 
-            kubectl rollout status deployment.apps/udastone-deployment
-      - run:
-          name: rolling update
+          name: Upload the container to remote repo
           command: |
-            kubectl set image deployment.apps/udastone-deployment udacity-capstone=$dockerpath:$VERSION
-      - run:
-          name: watch rollout
-          command: | 
-            kubectl rollout status deployment.apps/udastone-deployment
-      - run:
-          name: list kubectl resources
-          command: |
-            echo "List Deployments:"
-            kubectl get deployments
-            echo ""
-            echo "List Services:"
-            kubectl get svc
-            echo ""
-            echo "List Pods:"
-            kubectl get pods
+            #login to docker        
+            docker login --username $DOCKER_USERNAME --password $DOCKER_ACCESS_TOKEN
+            #tag local image with unique circleci ID in prep for pushing to remote repo
+            docker tag project5 $DOCKER_USERNAME/project5:latest
+            #push the image to docker repo
+            docker push $DOCKER_USERNAME/project5:latest
+    
+    create-eks-cluster:
+      executor: aws-eks/python3
+      steps:
+        - checkout
+        - aws-eks/install-aws-iam-authenticator:
+            release-tag: ''
+        - run:
+            name:
+            command: |
+              if which eksctl > /dev/null; then
+              echo "eksctl is already installed"
+              exit 0
+              fi
+              mkdir -p eksctl_download
+              curl --silent --location --retry 5 "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C eksctl_download
+              chmod +x eksctl_download/eksctl
+              SUDO=""
+              if [ $(id -u) -ne 0 ] && which sudo > /dev/null ; then
+              SUDO="sudo"
+              fi
+              $SUDO mv eksctl_download/eksctl /usr/local/bin/
+              rmdir eksctl_download
+        - aws-eks/create-cluster:
+            cluster-name: Cluster-${CIRCLE_WORKFLOW_ID:0:7}
+            skip-kubectl-install: false
+            verbose: 3
+            node-type: t2.micro
+            nodes-max: 2
+            ssh-access: false
+            ssh-public-key: ''
+        - destroy-env
+      
+    
+    deploy-new-eks-cluster:
+      executor: aws-eks/python3
+      steps:
+      - checkout
+      - kubernetes/install
+      - aws-eks/update-kubeconfig-with-authenticator:
+          cluster-name: Cluster-${CIRCLE_WORKFLOW_ID:0:7}
+          install-kubectl: true
+      - kubernetes/create-or-update-resource:
+          get-rollout-status: false
+          resource-file-path: deployment.yml
+          resource-name: deployment/project5
+      - destroy-env
+
+    test-new-cluster:
+      executor: aws-eks/python3
+      steps:
+        - kubernetes/install
+        - aws-eks/update-kubeconfig-with-authenticator:
+            cluster-name: Cluster-${CIRCLE_WORKFLOW_ID:0:7}
+        - run:
+            name: check new cluster details
+            command: |
+              kubectl get services
+              kubectl get pods
+              kubectl get deployment
+              kubectl get nodes
+        - destroy-env
+
 
 workflows:
-  application-pipeline:
+  default:
     jobs:
-      - lint_dockerfile
-      - publish_docker_image:
-           requires: [lint_dockerfile]
-      - create_eks_cluster:
-           requires: [publish_docker_image]
-      - deploy_kubernetes_app:
-           requires: [create_eks_cluster]
+      - linting-app-code
+      - push-docker-image-to-image-repo:
+          requires:
+            - linting-app-code
+      - create-eks-cluster:
+          requires:
+            - push-docker-image-to-image-repo
+      - deploy-new-eks-cluster:
+          requires:
+            - create-eks-cluster
+      - test-new-cluster:
+          requires:
+            - deploy-new-eks-cluster
