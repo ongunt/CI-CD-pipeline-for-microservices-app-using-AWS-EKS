@@ -162,13 +162,7 @@ jobs:
             . venv/bin/activate
             make install
             make lint
-            RESULT=$?
-            if [ ${RESULT} -eq 0 ]
-            then
-              echo "linting success"
-            else
-              echo "linting failed"
-            fi
+ 
 
     docker:
       docker:

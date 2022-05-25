@@ -1,19 +1,18 @@
 FROM python:3.7.3-stretch
 
-# Working Directory
+#STEP1
 WORKDIR /app
 
-# Copy source code to working directory
+#STEP2
 COPY . app.py /app/
 
-nope
-# Install packages from requirements.txt
-# hadolint ignore=DL3013
+#STEP3
+
 RUN pip install --upgrade pip &&\
     pip install --trusted-host pypi.python.org -r requirements.txt
     
-# Expose port 80
+# STEP4
 EXPOSE 80
 
-# Run app.py at container launch
+# STEP5
 CMD ["python", "app.py"]
