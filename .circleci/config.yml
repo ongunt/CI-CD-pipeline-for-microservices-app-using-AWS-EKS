@@ -104,7 +104,7 @@ commands:
         - run:
             name: creating cluster
             command: |
-              eksctl create cluster --name=app --region=us-west-2 --instance-types=t2.micro
+              eksctl create cluster --name=app 
     
     update-env: 
       description: update cluster
@@ -162,6 +162,13 @@ jobs:
             . venv/bin/activate
             make install
             make lint
+            RESULT=$?
+            if [ ${RESULT} -eq 0 ]
+            then
+              echo "linting success"
+            else
+              echo "linting failed"
+            fi
 
     docker:
       docker:
