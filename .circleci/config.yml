@@ -112,7 +112,7 @@ commands:
         - run: 
             name: updating cluster
             command: |
-              aws eks update-kubeconfig --name app   
+              aws eks update-kubeconfig --name app
 
     destroy-env:
       description: Destroying cluster on fail
